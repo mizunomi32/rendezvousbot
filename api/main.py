@@ -16,9 +16,13 @@
 #          ##  ##   ##  ##    ##
 #          ##   ##   ####     ##
 #          #####     ####     ##
-#
+#   待ち合わせモブ
 ###############################################
-
+#
+# TODO : Station voting
+# TODO : recommend from voting
+###############################################
+###############################################
 from flask import Flask, request, abort
 import os, re, json
 import sqlite3
@@ -26,128 +30,138 @@ from linebot import *
 from linebot.exceptions import *
 from linebot.models import *
 
+from mapimage import getStaticMapAddress
+from logic import *
+from final_random_message import *
+
 app = Flask(__name__)
 
-line_bot_api = LineBotApi('xxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
-handler = WebhookParser('xxxxxxxxxxxxxx')
-dbname = 'database.db'
-
+line_bot_api = LineBotApi('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
+handler = WebhookParser('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
 
 def solve(event):
-    connection = sqlite3.connect(dbname)
-    cursor = connection.cursor()
+
     if event.type == "join":
-        # ルームに参加したとき
-        line_bot_api.reply_message(event.reply_token,TextSendMessage(text="目的地を教えてください"))
+        # join event
+        PostJoinMessage(event)
+
     elif event.type == "message":
-        # メッセージを受信したとき
+        #  message event
+
         if  re.compile("目的地").search(event.message.text):
-            gole=event.message.text.replace("目的地は","")
-            post_stationcarousel(event,gole)
+            # Goal is determined
+
+            PostStationCarousel(event)
 
         elif re.compile("の近くで決定!!").search(event.message.text):
-            station=event.message.text.replace("の近くで決定!!","")
-            post_spotcarousel(event,station)
+            # Station is determined
+            # TODO : Station voting
+
+            PostSpotCarousel(event)
+
         elif re.compile("を集合場所に決定!!").search(event.message.text):
+            # determined
+            pos=event.message.text.replace("を集合場所に決定!!","")
+            message=[
+                TextSendMessage(text="待ち合わせ場所は"+pos+"だね。"),TextSendMessage(text=str(picked_up()))
+                ]
+            line_bot_api.reply_message(event.reply_token,message)
             line_bot_api.leave_group(event.source.group_id)
-        line_bot_api.reply_message(event.reply_token,TextSendMessage(text="I read it!!"))
-    cursor.close()
 
-# 駅名カルーセルを送る
-def post_stationcarousel(event,gole):
-    # DBに候補の駅を追加(setp=1)
-    #connection = sqlite3.connect(dbname)
-    #cursor = connection.cursor()
-    #cursor.close()
-    station_list=["a駅","b駅","c駅"]
-    #############
-    # 駅名取得
-    ###########
 
+#  make station`s Carousel and post it.
+def PostStationCarousel(event):
+
+    gole=event.message.text.replace("目的地は","")
+    station_list=NameToStation(gole)
     st_columns=[]
+
     for i in station_list:
+        colaction=[
+            MessageTemplateAction(label='OK',text=str(i.get("name"))+'の近くで決定!!')
+            ]
         col = CarouselColumn(
-            thumbnail_image_url='https://vps.miccchi.com/api/bk.png',
-            title=i,
-            text=i+"でいいですか？\n代表者と話し合って決めてね",
-            actions=[
-                    MessageTemplateAction(label='OK',text=i+'の近くで決定!!')
-                    ]
-                    )
+            thumbnail_image_url=getStaticMapAddress(i.get("name")),
+            title=str(i.get("name")),
+            text=str(i.get("name"))+"でいいですか？\n代表者と話し合って決めてね",
+            actions=colaction
+            )
         st_columns.append( col )
+
     stationcarousel = TemplateSendMessage(
         alt_text='どの駅の近くがいいですか？',
-        template=CarouselTemplate(
-            columns=st_columns
-                    )
-                )
-    message = [TextSendMessage(text=gole+" の近くの駅を探します"),TextSendMessage(text="集合場所はどの駅の近くがいいですか？"),stationcarousel]
+        template=CarouselTemplate(columns=st_columns)
+        )
+    message = [
+        TextSendMessage(text="目的地の最寄り駅の候補をあげたよ\n皆の最寄り駅をタップしてね\nなるべく皆にとって都合のいい候補をだしたいから。"),
+        stationcarousel
+        ]
+
     line_bot_api.reply_message(event.reply_token,message)
 
-# 集合場所候補地のカルーセルを送る
-def post_spotcarousel(event,station):
-    # DBに確定駅と候補地を追加(setp=2)
-    #connection = sqlite3.connect(dbname)
-    #cursor = connection.cursor()
-    #cursor.close()
-    spot_list=["1番広場","2番広場","3番広場"]
-    #############
-    # 場所取得
-    ###########
+# make site`s proposed carousel and post it
+def PostSpotCarousel(event):
+
+    station=event.message.text.replace("の近くで決定!!","")
+    # TODO : recommend from voting
+    recdata = [{"name":station,"num":1}]
+    spot_list=recommend(recdata)
 
     spot_columns=[]
     for i in spot_list:
+        colaction=[
+            MessageTemplateAction(label='OK',text=str(i.get("name"))+'を集合場所に決定!!')
+            ]
         col = CarouselColumn(
-            thumbnail_image_url='https://vps.miccchi.com/api/bk.png',
-            title=i,
-            text=i+"でいいですか？\n代表者と話し合って決めてね",
-            actions=[
-                    MessageTemplateAction(
-                    label='OK',
-                    text=i+'を集合場所に決定!!'
-                    )
-                    ]
-                    )
+            thumbnail_image_url=getStaticMapAddress(i.get("name")),
+            title=str(i.get("name")),
+            text=str(i.get("name"))+"でいいですか？\n代表者と話し合って決めてね",
+            actions=colaction
+            )
         spot_columns.append( col )
+
     spotcarousel = TemplateSendMessage(
         alt_text='どこがいいですか？',
-        template=CarouselTemplate(
-            columns=spot_columns
-                    )
-                )
-    message = [TextSendMessage(text=station+"ですね"),TextSendMessage(text="集合場所はどこがいいですか？"),spotcarousel]
+        template=CarouselTemplate(columns=spot_columns)
+        )
+    message = [
+        TextSendMessage(text="候補をあげたよ\n皆で待ち合わせ場所を決めて！"),
+        spotcarousel
+        ]
+
     line_bot_api.reply_message(event.reply_token,message)
 
-# joinメッセージを送る
-def post_joinmessage(event):
-    # DBにグループ追加(setp=0)
-    #connection = sqlite3.connect(dbname)
-    #cursor = connection.cursor()
-    #cursor.close()
+# post join message
+def PostJoinMessage(event):
+
     message = [
-        TextSendMessage(text="目的地を教えてください")
+        TextSendMessage(text="こんにちは\n私は皆にとってベストな待ち合わせ場所の候補をあげるよ\n候補から待ち合わせ場所を決めたら僕は退出するね！"),
+        TextSendMessage(text="まず目的地を教えてください！")
         ]
+
     line_bot_api.reply_message(event.reply_token,message)
 
 @app.route("/callback", methods=['POST'])
 def callback():
-    #  X-Line-Signature header の値を取得
+    #  Get X-Line-Signature header
     signature = request.headers['X-Line-Signature']
 
-    # リクエストのbody部分を取得
+    # Get request`s body and events
     body = request.get_data(as_text=True)
     events = handler.parse(body, signature)
 
-    try:
-        for event in events:
+
+    for event in events:
+        try:
             solve(event)
-        # eventを記録(デバック用)
-        f = open('text.txt', 'a')
-        for event in events:
-            f.write(str(event)+'\n')
-        f.close()
-    except InvalidSignatureError:
-        abort(400)
+        except InvalidSignatureError:
+            abort(400)
+
+    # Event loging (Debag)
+    f = open('text.json', 'a')
+    for event in events:
+        f.write(str(event)+'\n')
+    f.close()
 
     return 'OK'
 
